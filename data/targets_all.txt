@@ -1,12 +1,1 @@
-cubool_mult
-cubool_add
-cusp_mult
-cusp_add
-cusparse_mult
-cusparse_add
-clsparse_mult
-clbool_mult
-clbool_mult_hash
-clbool_add
-suitesparse_mult
-suitesparse_add
+suitesparse_multiply

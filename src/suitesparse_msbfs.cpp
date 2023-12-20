@@ -22,14 +22,14 @@
 // SOFTWARE.                                                                      //
 ////////////////////////////////////////////////////////////////////////////////////
 
-#include <benchmark_base.hpp>
-#include <matrix_loader.hpp>
-#include <args_processor.hpp>
-#include <profile_mem.hpp>
+#include "benchmark_base.hpp"
+#include "matrix_loader.hpp"
+#include "args_processor.hpp"
+#include "profile_mem.hpp"
 
 extern "C"
 {
-#include <GraphBLAS.h>
+#include "suitesparse/LAGraph.h"
 };
 
 #define BENCH_DEBUG
@@ -62,6 +62,16 @@ namespace benchmark {
         }
 
         void setupExperiment(size_t experimentIdx, size_t& iterationsCount, std::string& name) override {
+//            std::cout << "setup" << std::endl;
+
+            src_count = 50;
+
+            src = (GrB_Index*)std::malloc(sizeof(GrB_Index) * src_count);
+
+            for (auto i = 0; i < src_count; i++) {
+                src[i] = (GrB_Index) i;
+            }
+
             auto& entry = argsProcessor.getEntries()[experimentIdx];
 
             iterationsCount = entry.iterations;
@@ -82,22 +92,28 @@ namespace benchmark {
             size_t n = input.nrows;
             assert(input.nrows == input.ncols);
 
-            GrB_CHECK(GrB_Matrix_new(&A, GrB_FP32, n, n));
+            GrB_CHECK(GrB_Matrix_new(&A, GrB_INT32, n, n));
 
             std::vector<GrB_Index> I(input.nvals);
             std::vector<GrB_Index> J(input.nvals);
 
-            float* X = (float*)std::malloc(sizeof(float) * input.nvals);
+            int* X = (int*)std::malloc(sizeof(int) * input.nvals);
 
             for (auto i = 0; i < input.nvals; i++) {
                 I[i] = input.rows[i];
                 J[i] = input.cols[i];
-                X[i] = 1.0f;
+                X[i] = 1;
             }
 
-            GrB_CHECK(GrB_Matrix_build_FP32(A, I.data(), J.data(), X, input.nvals, GrB_FIRST_FP32));
+            GrB_CHECK(GrB_Matrix_build_INT32(A, I.data(), J.data(), X, input.nvals, GrB_FIRST_INT32));
 
             std::free(X);
+
+            std::string msgString = "graph has not been created";
+            char msg[27];
+            strcpy(msg, msgString.c_str());
+
+            GrB_CHECK(LAGraph_New(&G, &A, LAGraph_ADJACENCY_UNDIRECTED, msg))
         }
 
         void tearDownExperiment(size_t experimentIdx) override {
@@ -108,23 +124,16 @@ namespace benchmark {
         }
 
         void setupIteration(size_t experimentIdx, size_t iterationIdx) override {
-            GrB_CHECK(GrB_Matrix_new(&R, GrB_FP32, input.nrows * input.nrows, input.ncols * input.ncols));
+            GrB_CHECK(GrB_Matrix_new(&L, GrB_INT32, src_count, input.ncols));
+            GrB_CHECK(GrB_Matrix_new(&P, GrB_INT32, src_count, input.ncols));
         }
 
         void execIteration(size_t experimentIdx, size_t iterationIdx) override {
-            GrB_CHECK(GrB_Matrix_kronecker_BinaryOp(R, nullptr, nullptr, GrB_TIMES_FP32, A, A, nullptr));
+            std::string msgString = "msbfs failure";
+            char msg[14];
+            strcpy(msg, msgString.c_str());
 
-            GrB_Index nrows;
-            GrB_Index ncols;
-            GrB_Index nvals;
-
-            GrB_CHECK(GrB_Matrix_nrows(&nrows, R));
-            GrB_CHECK(GrB_Matrix_ncols(&ncols, R));
-            GrB_CHECK(GrB_Matrix_nvals(&nvals, R));
-
-            std::cout << "   Result matrix: size " << nrows << " x " << ncols
-                << " nvals " << nvals << std::endl;
-
+            GrB_CHECK(LAGr_BreadthFirstSearch(&L, &P, G, src, src_count, msg));
         }
 
         void tearDownIteration(size_t experimentIdx, size_t iterationIdx) override {
@@ -132,23 +141,29 @@ namespace benchmark {
             GrB_Index ncols;
             GrB_Index nvals;
 
-            GrB_CHECK(GrB_Matrix_nrows(&nrows, R));
-            GrB_CHECK(GrB_Matrix_ncols(&ncols, R));
-            GrB_CHECK(GrB_Matrix_nvals(&nvals, R));
+            GrB_CHECK(GrB_Matrix_nrows(&nrows, L));
+            GrB_CHECK(GrB_Matrix_ncols(&ncols, L));
+            GrB_CHECK(GrB_Matrix_nvals(&nvals, L));
 
 #ifdef BENCH_DEBUG
             log << "   Result matrix: size " << nrows << " x " << ncols
                 << " nvals " << nvals << std::endl;
 #endif
 
-            GrB_CHECK(GrB_Matrix_free(&R));
-            R = nullptr;
+            GrB_CHECK(GrB_Matrix_free(&L));
+            GrB_CHECK(GrB_Matrix_free(&P));
+            L = nullptr;
+            P = nullptr;
         }
 
     protected:
 
         GrB_Matrix A;
-        GrB_Matrix R;
+        LAGraph_Graph G;
+        GrB_Matrix L;
+        GrB_Matrix P;
+        GrB_Index *src;
+        int src_count;
 
         ArgsProcessor argsProcessor;
         Matrix input;
